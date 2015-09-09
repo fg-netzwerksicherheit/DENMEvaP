@@ -1,0 +1,74 @@
+#!/bin/bash
+
+BENCHMARK_NAME=$(basename $1)
+DURATION=$2
+START_RATE=$3
+RATE_INCREMENT=$4
+MAX_RATE=$5
+CLASS_NAME=$6
+
+OUTPUT_DIR=benchmark_results
+TMP_FILE_PREFIX="$OUTPUT_DIR/$BENCHMARK_NAME.tmp"
+CPU_USAGE_OUTPUT_FILE="$OUTPUT_DIR/$BENCHMARK_NAME.results.cpu"
+EVENT_STATISTICS_OUTPUT_FILE="$OUTPUT_DIR/$BENCHMARK_NAME.results.event_statistics"
+FIFO="notify.fifo"
+
+mkdir -p "$OUTPUT_DIR"
+rm -f "$CPU_USAGE_OUTPUT_FILE"
+rm -f "$EVENT_STATISTICS_OUTPUT_FILE"
+rm -f $FIFO
+
+for i in $(seq $START_RATE $RATE_INCREMENT $MAX_RATE)
+do
+    echo "Running with rate: $i"
+    TMP_FILE="$TMP_FILE_PREFIX"
+
+    rm -f $FIFO
+    mkfifo $FIFO
+    CLASSPATH=:$CLASSPATH:lib/*:bin/ /home/user/jdk1.7.0_51/bin/java jEsperToolkit.test.fixed_rate.$CLASS_NAME $i $(($DURATION * 1000)) &
+    JAVA_PID=$!
+    echo "Java process id: $JAVA_PID"
+
+    NOTIFY="Waiting..."
+    echo "Notify output: $NOTIFY"
+    while [[ $(echo $NOTIFY | grep send_start > /dev/null ; echo $?) -ne 0 ]];
+    do
+        read NOTIFY < $FIFO
+#        NOTIFY=$(cat $FIFO) 
+        echo "Notify output: $NOTIFY"
+    done
+    echo "Collecting data..."
+
+    vmstat -n 1 $DURATION | awk ' { print $15 }' > "$TMP_FILE"
+
+    echo -n "$i " >> "$CPU_USAGE_OUTPUT_FILE"
+    tail -n $(($DURATION - 8)) "$TMP_FILE" | head -n $(($DURATION - 10)) | tr "\\n" " " >> $CPU_USAGE_OUTPUT_FILE
+    echo "" >> "$CPU_USAGE_OUTPUT_FILE"
+
+    echo "Waiting for Java process to finish..."
+    wait $JAVA_PID
+    RET=$?
+    echo "Wait returned with: $RET"
+
+    cat event_statistics >> $EVENT_STATISTICS_OUTPUT_FILE
+    rm -f event_statistics
+ 
+    echo -e "Finished... sleeping till next run.\n"
+    sleep 2s ;
+done
+
+rm -f $FIFO 
+
+echo "Summarizing data with R..."
+R --slave --vanilla --no-save --quiet <<R_END
+data <- read.csv("$CPU_USAGE_OUTPUT_FILE", header = FALSE, sep = " ", dec = ".")
+data <- na.omit(t(data))
+cpu_usage <- apply(data[2:length(data[,1]),], MARGIN=c(1,2), function(x) 100 - x)
+output_data <- cbind(data[1,], apply(cpu_usage, 2, mean), apply(cpu_usage, 2, function(x) quantile(x, 0.25)), apply(cpu_usage, 2, function(x) quantile(x, 0.75)))
+options (scipen=3)
+write.table(output_data, "$CPU_USAGE_OUTPUT_FILE.summarized", col.names = FALSE, row.names = FALSE)
+R_END
+
+echo "Plotting data with gnuplot..."
+gnuplot -e "diagramTitle=\"$BENCHMARK_NAME\"; input_cpu=\"$CPU_USAGE_OUTPUT_FILE.summarized\"; input_event_stats=\"$EVENT_STATISTICS_OUTPUT_FILE\"; output=\"$BENCHMARK_NAME.png\"; max_x=\"$MAX_RATE\""  $(dirname $0)/2d_data_plot.gpl
+

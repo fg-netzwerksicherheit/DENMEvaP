@@ -1,0 +1,79 @@
+PcapPacket mangling foo...
+
+How to get only the most important parts out of a PcapPacket:
+Most important parts in the scope of this text are: the CaptureHeader or PcapHeader and the captured protocol headers.
+This data should be sufficient to restore a packet and parse it using our well known functions and achieve the same result as parsing the original packet.
+So here it comes...
+
+
+The general structure of a PcapPacket is as follows (see also the API docs):
+--------------------------------------
+| PcapHeader | State | Captured Data |
+--------------------------------------
+
+The PcapHeader contains information such as the "wirelen" (the length of the captured packet) or the timestamp when the packet was captured.
+The state contains... well dunno xD (Go and read the API docs yourself for more details.).
+The captured data is the actual packet data that had been captured.
+
+##############
+# Extraction #
+##############
+We are interested in the PcapHeader as is and (for now) the first part of the captured data that contains the protocol headers up to and including the transport layer protocols.
+
+Please note that these are some pretty low level operations in the pcap data structures.
+
+Before the actual extraction the data in the PcapPacket, more precisely the CaptureHeader, needs to be modified such that the extracted data can be restored later on.
+The hdr_len field in the PcapHeader is used by jNetPcap during reconstruction to determine the size of the data to be fed into the new PcapPacket.
+Hence, it is essential that this corresponds to the size of our "new" extracted data.
+Else, there will be errors due to addresses being out of range etc.
+Consequently, the "new" hdr_len will be simply the accumulated length of the headers that are being extracted from the packet.
+Note that the length of the last header is the length of the payload of the preceding header.
+Thus, we omit the length of the last header (the one with headerId 0) as using this as well would result in the overall packet size.
+
+Getting the pcap header is easy.
+We just need to cut off the first n bytes for n being the length of the PcapHeader.
+The PcapHeader length can be determined via the static "sizeof" method of the org.jnetpcap.PcapHeader class, e.g., as follows:
+(def pcap-header-size (org.jnetpcap.PcapHeader/sizeof))
+The data can then be extracted, e.g.: (def h-vec (subvec p-vec 0 pcap-header-size))
+
+To get the headers from the captured data we need to know the offset of the captured data and the length of the captured headers.
+As we already know the length of the PcapHeader we just need to add the length of the state to this and we have the offset.
+In order to calculate the length of the state we need to know how many headers are contained in the captured data:
+(def pcap-header-count (.getHeaderCount pcap-p))
+With this information the length of the state portion can be calculated with the static "sizeof" method of the org.jnetpcap.packet.JPacket$State class (note this is an inner class in org.jnetpcap.packet.JPacket):
+(def state-size (org.jnetpcap.packet.JPacket$State/sizeof pcap-header-count))
+
+%TODO: See Above... duplicate.. mas o menos
+The length of each header in the captured data can be obtained as follows:
+(-> (.getState pcap-p) (.getHeaderLengthByIndex idx))
+Please note that only 
+pcap-header-count - 1
+headers must be taken into account.
+The length of the last header is the length of the payload of the preceding header.
+Hence, using this as well would result in the overall packet size.
+
+With this information the protocol headers can be extracted as well:
+(def ph-vec (subvec p-vec (+ pcap-header-size state-size) (+ pcap-header-size state-size + protocol-header-size)))
+
+
+##############
+# Reassembly #
+##############
+In the extraction phase we deliberately left out the state.
+Hence, we need to do a little bit "hand work" to get a parsable PcapPacket.
+
+First, we need to restore the header as follows:
+(def pcap-h (org.jnetpcap.PcapHeader.))
+(.peer pcap-h (org.jnetpcap.nio.JBuffer. (byte-array (map byte h-vec))) 0)
+Then we can reassemble the PcapPacket as follows:
+(def pcap-p (PcapPacket. JMemory$Type/POINTER))
+(.transferHeaderAndDataFrom pcap-p pcap-h (org.jnetpcap.nio.JBuffer. (byte-array (map byte ph-vec))))
+
+That's it.. now we can use the PcapPacket as we are used to:
+(pprint (parse-pcap-packet pcap-p))
+
+
+As you see this is rather trivial...
+
+
+

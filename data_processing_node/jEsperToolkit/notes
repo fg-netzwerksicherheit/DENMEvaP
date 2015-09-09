@@ -1,0 +1,10 @@
+Running a benchmark:
+
+benchmark/scripts/arp-filter-benchmark
+
+See the script for more details.
+
+Adding a new benchmark should be done by copying the relevant files;
+i.e., the script and the respective Java source and adjusting it as needed.
+
+

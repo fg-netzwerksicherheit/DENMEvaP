@@ -1,0 +1,14 @@
+set terminal png;
+set output output;
+set yrange [0:110]
+set ylabel "CPU Usage [%]"
+set y2range [0:110]
+set y2label "Successfully Processed Events [%]"
+set xrange [0:max_x]
+set xlabel "Input Event Rate [events/second]"
+set key center
+set grid
+set title diagramTitle; 
+plot input_cpu using 1:2 title "CPU Usage" axes x1y1 with linespoints, "" using 1:2:3:4 title "" axes x1y1 with errorbars, \
+     input_event_stats using 1:8 title "Input Event Rate" axes x1y2 with linespoints;
+

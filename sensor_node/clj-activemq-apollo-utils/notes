@@ -1,0 +1,3 @@
+FOO=$(lein classpath)
+java -cp $FOO clj_activemq_apollo_utils.main -d
+
